@@ -4,6 +4,8 @@ import subprocess as su
 
 import iocage.lib.iocage as ioc
 import libzfs
+import json
+import urllib.request
 from iocage.lib.ioc_check import IOCCheck
 from iocage.lib.ioc_clean import IOCClean
 from iocage.lib.ioc_fetch import IOCFetch
@@ -482,3 +484,74 @@ class JailService(CRUDService):
         IOCImage().import_jail(jail)
 
         return True
+
+    @accepts()
+    def get_plugin_versions(self):
+        """
+        Fetches a list of pkg's from the http://pkg.cdn.trueos.org/iocage/
+        repo and returns a dictionary for each plugin
+        """
+        r_pkgs = urllib.request.urlopen('http://pkg.cdn.trueos.org/iocage/All')
+        r_plugins = json.load(
+            urllib.request.urlopen(
+                'https://raw.githubusercontent.com/freenas/'
+                'iocage-ix-plugins/master/INDEX')
+        )
+        pkgs = {
+            'bruserver': ('N/A', '1'),
+            'sickrage': ('Git Branch - master', '1')
+        }
+        pkg_dict = {}
+        plugin_pkgs = {}
+        plugin_manifests = []
+        plugin_translation = {
+            'rslsync': 'btsync',
+            'emby-server': 'emby',
+            'transmission-daemon': 'transmission',
+            'backuppc4': 'backuppc',
+            'nextcloud': 'nextcloud-php56',
+            'tt-rss': 'ttrss',
+            'deluge-cli': 'deluge',
+            'madsonic-standalone': 'madsonic',
+            'subsonic-standalone': 'subsonic',
+            'quassel-core': 'quasselcore',
+            'linux-crashplan': 'crashplan'
+        }
+
+        for i in r_pkgs.readlines():
+            i = i.decode().split('"')
+
+            try:
+                pkg, version = i[1].rsplit('-', 1)
+                pkg_dict[pkg] = version
+            except (ValueError, IndexError):
+                continue  # It's not a pkg
+
+        for plugin, p_dict in r_plugins.items():
+            plugin_manifests.append(p_dict['MANIFEST'])
+
+        for plugin_pkg in plugin_manifests:
+            plugin = plugin_pkg.rsplit('.json')[0]
+            manifest_url = 'https://raw.githubusercontent.com/freenas/'\
+                           f'iocage-ix-plugins/master/{plugin_pkg}'
+            r = json.load(urllib.request.urlopen(manifest_url))
+
+            p_pkgs = [pkg.split('/')[-1] for pkg in r['pkgs']]
+            plugin_pkgs[plugin] = p_pkgs
+
+            for p_pkg in p_pkgs:
+                if p_pkg in pkg_dict.keys() or p_pkg in plugin_translation:
+                    try:
+                        version = pkg_dict[p_pkg]
+                    except KeyError:
+                        version = pkg_dict[plugin_translation[p_pkg]]
+                    if p_pkg == plugin or p_pkg in plugin_translation:
+                        pkgs[plugin] = (
+                            version.rsplit('%2', 1)[0].replace('.txz', ''),
+                            '1'
+                        )
+                else:
+                    if plugin not in pkgs:
+                        pkgs[plugin] = ('N/A', 'N/A')
+
+        return pkgs
