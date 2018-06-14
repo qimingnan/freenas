@@ -5,6 +5,7 @@ import ipaddress
 import os
 
 from croniter import croniter
+from datetime import datetime
 
 from middlewared.service_exception import ValidationErrors
 from middlewared.validators import ShouldBe
@@ -690,3 +691,16 @@ class UnixPerm(Attribute):
             schema['title'] = self.verbose
             schema['_required_'] = self.required
         return schema
+
+
+class Datetime(Attribute):
+    def validate(self, value):
+        if value is None and not self.required:
+            return self.default
+
+        if not isinstance(value, datetime):
+            # FIXME: midclt cannot supply a timeout
+            raise Error('datetime',
+                        'Not a datetime.datetime object.')
+
+        return super().validate(value)

@@ -4,8 +4,8 @@ import subprocess as su
 
 import iocage.lib.iocage as ioc
 import libzfs
-import json
-import urllib.request
+import requests
+from datetime import datetime, timedelta, timezone
 from iocage.lib.ioc_check import IOCCheck
 from iocage.lib.ioc_clean import IOCClean
 from iocage.lib.ioc_fetch import IOCFetch
@@ -50,7 +50,6 @@ class JailService(CRUDService):
             if jail_identifier == 'default':
                 jail_dicts['host_hostuuid'] = 'default'
                 jails.append(jail_dicts)
-
             else:
                 for jail in jail_dicts:
                     jail = list(jail.values())[0]
@@ -491,34 +490,26 @@ class JailService(CRUDService):
         Fetches a list of pkg's from the http://pkg.cdn.trueos.org/iocage/
         repo and returns a dictionary for each plugin
         """
-        r_pkgs = urllib.request.urlopen('http://pkg.cdn.trueos.org/iocage/All')
-        r_plugins = json.load(
-            urllib.request.urlopen(
-                'https://raw.githubusercontent.com/freenas/'
-                'iocage-ix-plugins/master/INDEX')
-        )
+        try:
+            pkgs = self.middleware.call_sync('cache.get', 'iocage_plugin_pkgs')
+
+            return pkgs
+        except Exception:
+            pass  # It's either new or past cache date
+
+        r_pkgs = requests.get('http://pkg.cdn.trueos.org/iocage/All')
+        r_plugins = requests.get(
+            'https://raw.githubusercontent.com/freenas/'
+            'iocage-ix-plugins/master/INDEX'
+        ).json()
+
         pkgs = {
             'bruserver': ('N/A', '1'),
-            'sickrage': ('Git Branch - master', '1')
+            'sickrage': ('Git branch - master', '1')
         }
         pkg_dict = {}
-        plugin_pkgs = {}
-        plugin_manifests = []
-        plugin_translation = {
-            'rslsync': 'btsync',
-            'emby-server': 'emby',
-            'transmission-daemon': 'transmission',
-            'backuppc4': 'backuppc',
-            'nextcloud': 'nextcloud-php56',
-            'tt-rss': 'ttrss',
-            'deluge-cli': 'deluge',
-            'madsonic-standalone': 'madsonic',
-            'subsonic-standalone': 'subsonic',
-            'quassel-core': 'quasselcore',
-            'linux-crashplan': 'crashplan'
-        }
 
-        for i in r_pkgs.readlines():
+        for i in r_pkgs.iter_lines():
             i = i.decode().split('"')
 
             try:
@@ -528,30 +519,24 @@ class JailService(CRUDService):
                 continue  # It's not a pkg
 
         for plugin, p_dict in r_plugins.items():
-            plugin_manifests.append(p_dict['MANIFEST'])
+            try:
+                primary_pkg = p_dict['primary_pkg'].split('/', 1)[-1]
+            except KeyError:
+                continue  # Plugin doesn't have a pkg, like bruserver
 
-        for plugin_pkg in plugin_manifests:
-            plugin = plugin_pkg.rsplit('.json')[0]
-            manifest_url = 'https://raw.githubusercontent.com/freenas/'\
-                           f'iocage-ix-plugins/master/{plugin_pkg}'
-            r = json.load(urllib.request.urlopen(manifest_url))
+            if primary_pkg in pkg_dict:
+                version = pkg_dict[primary_pkg]
+                pkgs[plugin] = (
+                    version.rsplit('%2', 1)[0].replace('.txz', ''),
+                    '1'
+                )
+            else:
+                if plugin not in pkgs:
+                    pkgs[plugin] = ('N/A', 'N/A')
 
-            p_pkgs = [pkg.split('/')[-1] for pkg in r['pkgs']]
-            plugin_pkgs[plugin] = p_pkgs
-
-            for p_pkg in p_pkgs:
-                if p_pkg in pkg_dict.keys() or p_pkg in plugin_translation:
-                    try:
-                        version = pkg_dict[p_pkg]
-                    except KeyError:
-                        version = pkg_dict[plugin_translation[p_pkg]]
-                    if p_pkg == plugin or p_pkg in plugin_translation:
-                        pkgs[plugin] = (
-                            version.rsplit('%2', 1)[0].replace('.txz', ''),
-                            '1'
-                        )
-                else:
-                    if plugin not in pkgs:
-                        pkgs[plugin] = ('N/A', 'N/A')
-
+        cache_date = datetime.now(timezone.utc) + timedelta(days=14)
+        self.middleware.call_sync(
+            'cache.put', 'iocage_plugin_pkgs', pkgs,
+            cache_date
+        )
         return pkgs
