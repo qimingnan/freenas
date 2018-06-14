@@ -62,8 +62,9 @@ class RcloneConfig:
                     "standard" if self.cloud_sync["filename_encryption"] else "off"))
                 self.tmp_file.write("password = {}\n".format(
                     rclone_encrypt_password(self.cloud_sync["encryption_password"])))
-                self.tmp_file.write("password2 = {}\n".format(
-                    rclone_encrypt_password(self.cloud_sync["encryption_salt"])))
+                if self.cloud_sync["encryption_salt"]:
+                    self.tmp_file.write("password2 = {}\n".format(
+                        rclone_encrypt_password(self.cloud_sync["encryption_salt"])))
 
                 remote_path = "encrypted:/"
 
@@ -260,9 +261,6 @@ class CloudSyncService(CRUDService):
         if data["encryption"]:
             if not data["encryption_password"]:
                 verrors.add(f"{name}.encryption_password", "This field is required when encryption is enabled")
-
-            if not data["encryption_salt"]:
-                verrors.add(f"{name}.encryption_salt", "This field is required when encryption is enabled")
 
         credentials = await self._get_credentials(data["credentials"])
         provider = REMOTES[credentials["provider"]]
